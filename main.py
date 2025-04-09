@@ -216,3 +216,76 @@ async def get_courses(
         )
 
     return courses
+
+class CourseCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=100)
+    description: str = Field(..., min_length=10)
+    difficulty: str = Field(..., regex="^(beginner|intermediate|advanced)$")
+    instructor: str
+    video_urls: List[str]
+    price: float = Field(..., ge=0)
+    ratings: float = Field(..., ge=0, le=5)
+
+class VideoUpload(BaseModel):
+    title: str
+    description: Optional[str] = None
+    course_id: Optional[str] = None
+
+# will be imported from env file
+CLOUDENARY_NAME = ""
+CLOUDENARY_KEY = ""
+CLOUDENARY_SECERET = ""
+
+async def upload_to_cloudinary(file_path: str) -> str:
+    return f"https://res.cloudinary.com/{CLOUDENARY_NAME}/video/upload/v1234567890/{file_path}"
+
+@app.post("/upload-video")
+async def upload_video(
+    video: VideoUpload,
+    current_user: str = Depends(get_current_user)
+):
+    try:
+        mock_video_url = await upload_to_cloudinary("demo_video.mp4")
+        return {
+            "message": "Video uploaded successfully",
+            "video_url": mock_video_url,
+            "title": video.title,
+            "description": video.description
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error uploading video: {str(e)}"
+        )
+
+@app.post("/create-course")
+async def create_course(
+    course: CourseCreate,
+    current_user: str = Depends(get_current_user)
+):
+    try:
+        course_dict = course.dict()
+        course_dict["instructor"] = current_user
+        course_dict["created_at"] = datetime.utcnow()
+        return {
+            "message": "Course created successfully",
+            "course": course_dict
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating course: {str(e)}"
+        )
+
+@app.get("/test-endpoints")
+async def test_endpoints():
+    return {
+        "message": "API is working",
+        "available_endpoints": [
+            "/upload-video",
+            "/create-course",
+            "/courses",
+            "/signup",
+            "/login"
+        ]
+    }
