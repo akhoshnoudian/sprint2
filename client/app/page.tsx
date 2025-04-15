@@ -87,11 +87,12 @@ export default function HomePage() {
               {courses.map((course) => (
                 <CourseCard
                   key={course._id}
+                  id={course._id}
                   title={course.title}
                   instructor={course.instructor}
                   difficulty={course.difficulty}
-                  rating={course.rating || course.ratings || 0}
-                  imageUrl={course.imageUrl}
+                  rating={course.ratings || 0}
+                  imageUrl={course.imageUrl || '/placeholder-course.jpg'}
                   price={course.price}
                   duration={course.duration || '30 minutes'}
                   description={course.description}

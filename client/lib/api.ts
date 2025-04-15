@@ -133,4 +133,62 @@ export const api = {
     
     return result;
   },
+
+  getCourse: async (courseId: string) => {
+    const response = await fetch(`${API_BASE_URL}/courses/${courseId}`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      },
+    });
+
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.detail || 'Failed to fetch course');
+    }
+    
+    return result;
+  },
+
+  getCurrentUser: async () => {
+    const response = await fetch(`${API_BASE_URL}/users/me`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      },
+    });
+
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.detail || 'Failed to fetch user info');
+    }
+    
+    return result;
+  },
+
+  purchaseCourse: async (courseId: string) => {
+    const response = await fetch(`${API_BASE_URL}/courses/${courseId}/purchase`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      },
+    });
+
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.detail || 'Failed to purchase course');
+    }
+    
+    return result;
+  },
 };

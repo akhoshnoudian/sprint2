@@ -13,6 +13,7 @@ import jwt
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from typing import List, Optional
+from bson import ObjectId
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -214,11 +215,19 @@ async def signup(user: User):
 
         # Hash the password
         hashed_password = get_password_hash(user.password)
-        user_dict = user.dict()
-        user_dict['password'] = hashed_password
+        
+        # Create user document
+        user_doc = {
+            "username": user.username,
+            "email": user.email,
+            "password": hashed_password,
+            "role": user.role,
+            "balance": user.balance,
+            "purchased_courses": user.purchased_courses  # List of purchased course IDs
+        }
         
         # Insert the user
-        result = users_collection.insert_one(user_dict)
+        result = users_collection.insert_one(user_doc)
         logger.info(f"User created with ID: {result.inserted_id}")
         
         # Generate token for auto-login
@@ -514,6 +523,201 @@ async def version_check():
         headers=CORS_HEADERS
     )
 
+@app.options("/courses")
+async def courses_options():
+    return JSONResponse(content={}, headers=CORS_HEADERS)
+
+@app.get("/courses")
+async def list_courses():
+    try:
+        # Get all courses from the database
+        courses = list(courses_collection.find())
+        # Convert ObjectId to string for JSON serialization
+        for course in courses:
+            course["_id"] = str(course["_id"])
+        return JSONResponse(content=courses, headers=CORS_HEADERS)
+    except Exception as e:
+        logger.error(f"Error listing courses: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Internal server error"},
+            headers=CORS_HEADERS
+        )
+
+@app.options("/courses/{course_id}")
+async def course_detail_options(course_id: str):
+    return JSONResponse(content={}, headers=CORS_HEADERS)
+
+@app.options("/courses/{course_id}")
+async def course_detail_options(course_id: str):
+    return JSONResponse(content={}, headers=CORS_HEADERS)
+
+@app.get("/courses/{course_id}")
+async def get_course(course_id: str):
+    try:
+        logger.info(f"Fetching course with ID: {course_id}")
+        # Convert string ID to ObjectId
+        course = courses_collection.find_one({"_id": ObjectId(course_id)})
+        if course:
+            # Convert ObjectId to string for JSON serialization
+            course["_id"] = str(course["_id"])
+            logger.info(f"Found course: {course}")
+            return JSONResponse(content=course, headers=CORS_HEADERS)
+        logger.warning(f"Course not found with ID: {course_id}")
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"detail": "Course not found"},
+            headers=CORS_HEADERS
+        )
+    except Exception as e:
+        logger.error(f"Error getting course: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Internal server error"},
+            headers=CORS_HEADERS
+        )
+
+@app.options("/courses/{course_id}/purchase")
+async def purchase_course_options(course_id: str):
+    return JSONResponse(content={}, headers=CORS_HEADERS)
+
+@app.post("/courses/{course_id}/purchase")
+async def purchase_course(course_id: str, current_user: str = Depends(get_current_user)):
+    try:
+        logger.info(f"Purchase request received for course {course_id} by user {current_user}")
+        # Get course details
+        logger.info(f"Fetching course details for {course_id}")
+        course = courses_collection.find_one({"_id": ObjectId(course_id)})
+        if not course:
+            logger.warning(f"Course {course_id} not found")
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content={"detail": "Course not found"},
+                headers=CORS_HEADERS
+            )
+
+        # Get user details
+        logger.info(f"Fetching user details for {current_user}")
+        user = users_collection.find_one({"username": current_user})
+        logger.info(f"User data: {user}")
+        if not user:
+            logger.warning(f"User {current_user} not found")
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content={"detail": "User not found"},
+                headers=CORS_HEADERS
+            )
+
+        # Check if course is already purchased
+        purchased_courses = user.get("purchased_courses", [])
+        logger.info(f"User's purchased courses: {purchased_courses}")
+        if any(str(course_id) == str(pc) for pc in purchased_courses):
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": "Course already purchased"},
+                headers=CORS_HEADERS
+            )
+
+        # Get course details for the receipt
+        course_price = course.get("price", 0)
+        course_title = course.get("title", "Unknown Course")
+        
+        # Add course to user's purchased courses
+        purchased_courses = user.get("purchased_courses", [])
+        purchased_courses.append(str(course_id))  # Convert to string before storing
+
+        # Add purchase record
+        purchase_record = {
+            "course_id": str(course_id),
+            "course_title": course_title,
+            "price": course_price,
+            "purchase_date": datetime.utcnow()
+        }
+        
+        purchase_history = user.get("purchase_history", [])
+        purchase_history.append(purchase_record)
+
+        try:
+            users_collection.update_one(
+                {"username": current_user},
+                {
+                    "$set": {
+                        "purchased_courses": purchased_courses,
+                        "purchase_history": purchase_history
+                    }
+                }
+            )
+            logger.info(f"Course {course_id} added to user {current_user}'s purchased courses")
+        except Exception as e:
+            logger.error(f"Error updating user: {str(e)}")
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"detail": "Failed to update user"},
+                headers=CORS_HEADERS
+            )
+
+        return JSONResponse(
+            content={
+                "message": "Course purchased successfully",
+                "course_title": course_title,
+                "purchase_date": purchase_record["purchase_date"].isoformat(),
+                "price": course_price
+            },
+            headers=CORS_HEADERS
+        )
+
+    except Exception as e:
+        logger.error(f"Error purchasing course: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Internal server error"},
+            headers=CORS_HEADERS
+        )
+
+@app.options("/users/me")
+async def users_me_options():
+    return JSONResponse(content={}, headers=CORS_HEADERS)
+
+def serialize_datetime(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return obj
+
+def serialize_user(user):
+    # Convert ObjectId to string
+    user["_id"] = str(user["_id"])
+    
+    # Remove sensitive information
+    user.pop("password", None)
+    
+    # Convert datetime objects in purchase history
+    if "purchase_history" in user:
+        for purchase in user["purchase_history"]:
+            if "purchase_date" in purchase:
+                purchase["purchase_date"] = serialize_datetime(purchase["purchase_date"])
+    
+    return user
+
+@app.get("/users/me")
+async def get_current_user_info(current_user: str = Depends(get_current_user)):
+    try:
+        user = users_collection.find_one({"username": current_user})
+        if user:
+            serialized_user = serialize_user(user)
+            return JSONResponse(content=serialized_user, headers=CORS_HEADERS)
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"detail": "User not found"},
+            headers=CORS_HEADERS
+        )
+    except Exception as e:
+        logger.error(f"Error getting user info: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Internal server error"},
+            headers=CORS_HEADERS
+        )
+
 @app.get("/test-endpoints")
 async def test_endpoints():
     return {
@@ -522,6 +726,7 @@ async def test_endpoints():
             "/upload-video",
             "/create-course",
             "/courses",
+            "/courses/{course_id}",
             "/signup",
             "/login"
         ]
