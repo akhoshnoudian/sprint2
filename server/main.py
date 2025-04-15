@@ -1,8 +1,12 @@
 import os
 import re
-from fastapi import FastAPI, Depends, HTTPException, status, Query
+import logging
+import shutil
+from fastapi import FastAPI, Depends, HTTPException, status, Query, Request, File, UploadFile, Form
+from tempfile import NamedTemporaryFile
 from fastapi.security import OAuth2PasswordBearer
-from pydantic import BaseModel, EmailStr, Field, root_validator
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, EmailStr, Field, model_validator
 from passlib.context import CryptContext
 from pymongo import MongoClient
 import jwt
@@ -10,23 +14,81 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from typing import List, Optional
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Load environment variables
 load_dotenv()
 
 SECRET_KEY = os.getenv("SECRET_KEY")
-MONGO_URI = os.getenv("MONGO_URI")
+# If no MONGO_URI is set, use a default one
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://shashank8can:vGmtipNL3W4jdlXJ@cluster0.kvt4m.mongodb.net/")
 
 # Setup FastAPI
 app = FastAPI()
-
-# OAuth2PasswordBearer is used to extract the token from requests
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 # MongoDB Client
 client = MongoClient(MONGO_URI)
 db = client['yourdb']  # Use your database
 users_collection = db['users']  # Users collection
 courses_collection = db['courses']  # Courses collection
+
+# @app.on_event("startup")
+# async def startup_event():
+#     # Add sample courses if none exist
+#     sample_courses = [
+#         {
+#             "title": "Beginner Yoga",
+#             "description": "Perfect for those new to yoga",
+#             "difficulty": "beginner",
+#             "rating": 5,
+#             "price": 29.99
+#         },
+#         {
+#             "title": "Advanced HIIT",
+#             "description": "High-intensity interval training for experienced athletes",
+#             "difficulty": "advanced",
+#             "rating": 4,
+#             "price": 49.99
+#         }
+#     ]
+
+#     # Insert sample courses if collection is empty
+#     if courses_collection.count_documents({}) == 0:
+#         courses_collection.insert_many(sample_courses)
+#         logger.info("Added sample courses to database")
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"Request: {request.method} {request.url}")
+    logger.info(f"Headers: {request.headers}")
+    
+    # Only try to decode the body for non-multipart requests
+    if not request.headers.get("content-type", "").startswith("multipart/form-data"):
+        try:
+            body = await request.body()
+            if body:
+                logger.info(f"Body: {body.decode()}")
+        except Exception as e:
+            logger.error(f"Error reading body: {e}")
+
+    response = await call_next(request)
+    return response
+
+# CORS and Cache Control headers
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "http://localhost:3000",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept, Origin, Content-Length, Cache-Control, Pragma, Expires",
+    "Access-Control-Allow-Credentials": "true",
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0"
+}
+
+# OAuth2PasswordBearer is used to extract the token from requests
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 # Password hashing setup
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -40,10 +102,11 @@ def verify_password(plain_password: str, hashed_password: str):
     return pwd_context.verify(plain_password, hashed_password)
 
 # Token validation
-def create_access_token(data: dict, expires_delta: timedelta = timedelta(hours=1)):
+def create_access_token(data: dict, expires_delta: timedelta = timedelta(days=7)):
     to_encode = data.copy()
     expire = datetime.utcnow() + expires_delta
     to_encode.update({"exp": expire})
+    logger.info(f"Creating token with expiry: {expire} UTC")
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm="HS256")
     return encoded_jwt
 
@@ -66,11 +129,11 @@ class User(BaseModel):
     username: str = Field(..., min_length=4, max_length=50)  # Non-empty username
     email: str  # Valid email format
     password: str = Field(..., min_length=8)  # Password must be at least 8 characters long
-    role: str = 'user'  # Default role as user
+    role: str = Field(default='user', pattern='^(user|instructor)$')  # Default role as user
 
     # Custom Validators
-    @root_validator(pre=True)
-    def check_username_and_email(cls, values):
+    @model_validator(mode='before')
+    def check_username_and_email(cls, values) -> dict:
         username = values.get('username')
         email = values.get('email')
 
@@ -88,8 +151,8 @@ class User(BaseModel):
 
         return values
 
-    @root_validator(pre=True)
-    def check_password_complexity(cls, values):
+    @model_validator(mode='before')
+    def check_password_complexity(cls, values) -> dict:
         password = values.get('password')
         
         # Check password length manually
@@ -113,169 +176,343 @@ class LoginRequest(BaseModel):
 # Token validation middleware
 def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
+        logger.info(f"Validating token: {token[:20]}...")
+        logger.info(f"Using SECRET_KEY: {SECRET_KEY[:5]}...")
         payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        logger.info(f"Token payload: {payload}")
         username: str = payload.get("sub")
         if username is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
         return username
     except jwt.ExpiredSignatureError:
+        logger.error("Token validation failed: Token expired")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials")
+    except jwt.PyJWTError as e:
+        logger.error(f"Token validation failed: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Could not validate credentials: {str(e)}")
 
 
 # Routes
+from fastapi.logger import logger
+import traceback
+
+@app.options("/signup")
+async def signup_options():
+    return JSONResponse(content={}, headers=CORS_HEADERS)
+
 @app.post("/signup")
 async def signup(user: User):
-    # Check if email is already registered
-    if users_collection.find_one({"email": user.email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
+    response = JSONResponse
+    try:
+        # Log the incoming request
+        logger.info(f"Signup request received for email: {user.email}")
 
-    # Hash the password
-    hashed_password = get_password_hash(user.password)
-    user_dict = user.dict()
-    user_dict['password'] = hashed_password
-    users_collection.insert_one(user_dict)
+        # Check if email is already registered
+        if users_collection.find_one({"email": user.email}):
+            logger.warning(f"Email already registered: {user.email}")
+            raise HTTPException(status_code=400, detail="Email already registered")
 
-    return {"msg": "User registered successfully"}
+        # Hash the password
+        hashed_password = get_password_hash(user.password)
+        user_dict = user.dict()
+        user_dict['password'] = hashed_password
+        
+        # Insert the user
+        result = users_collection.insert_one(user_dict)
+        logger.info(f"User created with ID: {result.inserted_id}")
+        
+        # Generate token for auto-login
+        access_token = create_access_token(data={"sub": user.username, "role": user.role})
+        
+        response = JSONResponse(
+            content={"msg": "User registered successfully", "token": access_token},
+            headers=CORS_HEADERS
+        )
+        return response
+    except HTTPException as he:
+        logger.error(f"HTTP Exception in signup: {str(he)}")
+        return JSONResponse(
+            status_code=he.status_code,
+            content={"detail": he.detail},
+            headers=CORS_HEADERS
+        )
+    except Exception as e:
+        logger.error(f"Error in signup: {str(e)}\n{traceback.format_exc()}")
+        return JSONResponse(
+            status_code=400,
+            content={"detail": f"Error during signup: {str(e)}"},
+            headers=CORS_HEADERS
+        )
 
+
+@app.options("/login")
+async def login_options():
+    return JSONResponse(content={}, headers=CORS_HEADERS)
 
 @app.post("/login")
 async def login(request: LoginRequest):
-    db_user = users_collection.find_one({"email": request.email})
-    if not db_user or not verify_password(request.password, db_user['password']):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    
-    access_token = create_access_token(data={"sub": db_user['username']})
-    return {"access_token": access_token, "token_type": "bearer"}
+    try:
+        # Verify the user exists and password is correct
+        user = users_collection.find_one({"email": request.email})
+        if not user or not verify_password(request.password, user["password"]):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid email or password"},
+                headers=CORS_HEADERS
+            )
+
+        # Generate JWT token
+        access_token = create_access_token(data={"sub": user["username"], "role": user["role"]})
+        return JSONResponse(
+            content={"token": access_token},
+            headers=CORS_HEADERS
+        )
+    except Exception as e:
+        logger.error(f"Login error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error"},
+            headers=CORS_HEADERS
+        )
 
 
 # Course Model (to define the course data structure)
+from urllib.parse import quote
+
 class Course(BaseModel):
     title: str
     description: str
     difficulty: str
     rating: int
     price: float
+    
+    def get_avatar_url(self) -> str:
+        # URL encode the title for use in the avatar URL
+        encoded_title = quote(self.title)
+        return f"https://avatars.dicebear.com/api/initials/{encoded_title}.svg?background=%230066ff"
 
 
 
+@app.options("/courses")
+async def courses_options():
+    return JSONResponse(content={}, headers=CORS_HEADERS)
 
-@app.get("/courses", response_model=List[Course])
+@app.get("/courses")
 async def get_courses(
     difficulty: Optional[str] = None,
     rating: Optional[str] = None
 ):
-   
-
-    valid_difficulties = ["beginner", "busy professional", "gym enthusiast"]
-
-    
-    if difficulty:
-        if difficulty not in valid_difficulties:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid difficulty value"
-            )
-
- 
-    parsed_rating = None
-    if rating is not None:  # user provided ?rating=...
-        try:
-            parsed_rating = int(rating)
-        except ValueError:
-            # If user passed a non-numeric for rating
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Rating must be a number"
-            )
+    try:
+        # Fetch all courses first
+        courses = list(courses_collection.find())
+        logger.info(f"Found {len(courses)} courses in database")
         
-        # Ensure rating is between 1 and 5
-        if parsed_rating < 1 or parsed_rating > 5:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Rating must be between 1 and 5"
-            )
-
-    
-    query = {}
-
-    if difficulty:
-        query["difficulty"] = difficulty
-
-    if parsed_rating is not None:
-        query["rating"] = parsed_rating
-
-    
-    courses = list(courses_collection.find(query))
-
-    if not courses:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No courses found for the given filter"
+        # Format each course
+        formatted_courses = []
+        for course in courses:
+            # Convert ObjectId to string
+            course["_id"] = str(course["_id"])
+            
+            # Add avatar URL
+            first_letter = course["title"][0].upper()
+            course["imageUrl"] = f"https://ui-avatars.com/api/?name={first_letter}&background=random&color=fff&size=128&rounded=true"
+            
+            # Convert datetime to string if needed
+            if "created_at" in course:
+                course["created_at"] = course["created_at"] if isinstance(course["created_at"], str) else course["created_at"].isoformat()
+            
+            formatted_courses.append(course)
+            logger.info(f"Formatted course: {course}")
+        
+        # Apply filters if provided
+        if difficulty:
+            formatted_courses = [c for c in formatted_courses if c.get("difficulty") == difficulty]
+        
+        if rating:
+            try:
+                parsed_rating = float(rating)
+                if 0 <= parsed_rating <= 5:
+                    formatted_courses = [c for c in formatted_courses if c.get("ratings", 0) >= parsed_rating]
+            except ValueError:
+                pass
+        
+        logger.info(f"Returning {len(formatted_courses)} courses after filtering")
+        return JSONResponse(
+            content=formatted_courses,
+            headers=CORS_HEADERS
         )
-
-    return courses
+    except Exception as e:
+        logger.error(f"Error fetching courses: {str(e)}")
+        return JSONResponse(
+            content=[],
+            headers=CORS_HEADERS
+        )
 
 class CourseCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=100)
     description: str = Field(..., min_length=10)
-    difficulty: str = Field(..., regex="^(beginner|intermediate|advanced)$")
-    instructor: str
-    video_urls: List[str]
+    difficulty: str = Field(..., pattern="^(beginner|intermediate|advanced)$")
     price: float = Field(..., ge=0)
     ratings: float = Field(..., ge=0, le=5)
+    video_urls: List[str] = Field(..., min_items=1)
 
-class VideoUpload(BaseModel):
-    title: str
-    description: Optional[str] = None
-    course_id: Optional[str] = None
+    @model_validator(mode='after')
+    def validate_video_urls(self) -> 'CourseCreate':
+        if not self.video_urls:
+            raise ValueError('At least one video URL is required')
+        
+        # Check if URLs are from Cloudinary
+        for url in self.video_urls:
+            if not url.startswith('https://res.cloudinary.com/'):
+                raise ValueError(f'Invalid video URL: {url}. Must be a Cloudinary URL')
+        return self
 
-# will be imported from env file
-CLOUDENARY_NAME = ""
-CLOUDENARY_KEY = ""
-CLOUDENARY_SECERET = ""
+# Video upload endpoint
+@app.options("/upload-video")
+async def upload_video_options():
+    return JSONResponse(content={}, headers=CORS_HEADERS)
 
-async def upload_to_cloudinary(file_path: str) -> str:
-    return f"https://res.cloudinary.com/{CLOUDENARY_NAME}/video/upload/v1234567890/{file_path}"
+import cloudinary
+import cloudinary.uploader
+
+# Configure Cloudinary
+cloud_name = os.getenv("CLOUDINARY_NAME")
+api_key = os.getenv("CLOUDINARY_KEY")
+api_secret = os.getenv("CLOUDINARY_SECRET")
+
+logger.info(f"Cloudinary Configuration:")
+logger.info(f"Cloud Name: {cloud_name}")
+logger.info(f"API Key: {api_key}")
+logger.info(f"API Secret: {'*' * len(api_secret) if api_secret else 'Not set'}")
+
+cloudinary.config(
+    cloud_name=cloud_name,
+    api_key=api_key,
+    api_secret=api_secret
+)
 
 @app.post("/upload-video")
 async def upload_video(
-    video: VideoUpload,
-    current_user: str = Depends(get_current_user)
+    file: UploadFile = File(...)
 ):
     try:
-        mock_video_url = await upload_to_cloudinary("demo_video.mp4")
-        return {
-            "message": "Video uploaded successfully",
-            "video_url": mock_video_url,
-            "title": video.title,
-            "description": video.description
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error uploading video: {str(e)}"
+        # Create a temporary file to store the upload
+        with NamedTemporaryFile(delete=False) as temp_file:
+            # Copy content from uploaded file to temp file
+            shutil.copyfileobj(file.file, temp_file)
+            temp_file_path = temp_file.name
+
+        # Verify Cloudinary configuration
+        current_config = cloudinary.config()
+        logger.info("Current Cloudinary Configuration:")
+        logger.info(f"Cloud Name: {current_config.cloud_name}")
+        logger.info(f"API Key: {current_config.api_key}")
+        
+        if not current_config.cloud_name or not current_config.api_key or not current_config.api_secret:
+            raise ValueError("Cloudinary configuration is incomplete. Please check environment variables.")
+
+        # Upload to Cloudinary
+        logger.info(f"Attempting to upload file: {file.filename} to Cloudinary")
+        try:
+            result = cloudinary.uploader.upload(
+                temp_file_path,
+                resource_type="video",
+                folder="course_videos",
+                public_id=f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+            )
+            logger.info(f"Cloudinary upload successful. Result: {result}")
+            
+            if 'secure_url' not in result:
+                raise ValueError(f"Upload succeeded but no secure_url in response: {result}")
+                
+            if 'demo' in result['secure_url']:
+                raise ValueError(f"Upload returned a demo URL. Check Cloudinary configuration.")
+        except Exception as upload_error:
+            logger.error(f"Cloudinary upload failed: {str(upload_error)}")
+            raise upload_error
+
+        # Clean up the temporary file
+        os.unlink(temp_file_path)
+
+        # Get the secure URL from Cloudinary
+        video_url = result['secure_url']
+        logger.info(f"Video URL from Cloudinary: {video_url}")
+        
+        # Return the actual Cloudinary URL
+        logger.info(f"Returning Cloudinary URL: {video_url}")
+        return JSONResponse(
+            content={
+                "message": "Video uploaded successfully",
+                "video_url": video_url,
+                "title": file.filename
+            },
+            headers=CORS_HEADERS
         )
+    except Exception as e:
+        logger.error(f"Error uploading video: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Error traceback: {traceback.format_exc()}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": f"Error uploading video: {str(e)}"},
+            headers=CORS_HEADERS
+        )
+
+# Course creation endpoint
+@app.options("/create-course")
+async def create_course_options():
+    return JSONResponse(content={}, headers=CORS_HEADERS)
 
 @app.post("/create-course")
 async def create_course(
     course: CourseCreate,
     current_user: str = Depends(get_current_user)
 ):
+    logger.info("Received course creation request")
+    logger.info(f"Course data: {course}")
+    logger.info(f"Video URLs: {course.video_urls}")
     try:
+        # Get user details to check role
+        user = users_collection.find_one({"username": current_user})
+        if not user or user.get("role") != "instructor":
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"detail": "Only instructors can create courses"},
+                headers=CORS_HEADERS
+            )
+
         course_dict = course.dict()
         course_dict["instructor"] = current_user
-        course_dict["created_at"] = datetime.utcnow()
-        return {
-            "message": "Course created successfully",
-            "course": course_dict
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating course: {str(e)}"
+        course_dict["created_at"] = datetime.utcnow().isoformat()
+        
+        # Insert into database
+        result = courses_collection.insert_one(course_dict)
+        course_dict["_id"] = str(result.inserted_id)
+        
+        return JSONResponse(
+            content={
+                "message": "Course created successfully",
+                "course": course_dict
+            },
+            headers=CORS_HEADERS
         )
+    except Exception as e:
+        logger.error(f"Error creating course: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Failed to create course"},
+            headers=CORS_HEADERS
+        )
+
+@app.get("/version-check")
+async def version_check():
+    return JSONResponse(
+        content={
+            "version": "new-version-with-timestamp",
+            "time": datetime.utcnow().isoformat()
+        },
+        headers=CORS_HEADERS
+    )
 
 @app.get("/test-endpoints")
 async def test_endpoints():
