@@ -2,23 +2,21 @@
 
 import { useState, useEffect } from "react"
 import { Loader2 } from "lucide-react"
-import { CourseCard } from "@/components/CourseCard"
+import CourseCard from "@/components/CourseCard"
 import { CourseFilterSidebar } from "@/components/CourseFilterSidebar"
 import { api } from "@/lib/api"
 
 interface Course {
-  _id: string;
-  title: string;
-  instructor: string;
-  difficulty: string;
-  rating?: number;
-  ratings?: number;
-  imageUrl: string;
-  price: number;
-  duration?: string;
-  description: string;
-  video_urls?: string[];
-  created_at?: string;
+  _id: string
+  title: string
+  instructor: { username: string; isVerified: boolean }
+  description: string
+  price: number
+  rating: number
+  thumbnail: string
+  duration: string
+  level: string
+  difficulty?: string // For backward compatibility
 }
 
 export default function HomePage() {
@@ -34,21 +32,14 @@ export default function HomePage() {
   const fetchCourses = async () => {
     try {
       setLoading(true)
-      const token = localStorage.getItem('token')
-      const response = await fetch('/api/courses', {
-        cache: 'no-store',
-        headers: {
-          'Authorization': token ? `Bearer ${token}` : ''
-        }
-      })
-      const data = await response.json()
-      console.log('Fetched courses:', data)
+      const response = await api.getCourses()
+      console.log('Fetched courses:', response)
       
-      const filteredCourses = data.filter((course: Course) => {
-        const courseDifficulty = course.difficulty.toLowerCase()
-        const matchesDifficulty = selectedDifficulty === "all" || courseDifficulty === selectedDifficulty.toLowerCase()
+      const filteredCourses = response.filter((course: Course) => {
+        const courseLevel = (course.level || '').toLowerCase()
+        const matchesDifficulty = selectedDifficulty === "all" || courseLevel === selectedDifficulty.toLowerCase()
         
-        const courseRating = course.rating || course.ratings || 0
+        const courseRating = course.rating || 0
         const matchesRating = courseRating >= selectedRating[0] && courseRating <= selectedRating[1]
         
         return matchesDifficulty && matchesRating
@@ -87,15 +78,15 @@ export default function HomePage() {
               {courses.map((course) => (
                 <CourseCard
                   key={course._id}
-                  id={course._id}
+                  _id={course._id}
                   title={course.title}
                   instructor={course.instructor}
-                  difficulty={course.difficulty}
-                  rating={course.ratings || 0}
-                  imageUrl={course.imageUrl || '/placeholder-course.jpg'}
+                  level={course.level}
+                  rating={course.rating}
+                  thumbnail={course.thumbnail}
                   price={course.price}
-                  duration={course.duration || '30 minutes'}
                   description={course.description}
+                  duration={course.duration}
                 />
               ))}
             </div>

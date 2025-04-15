@@ -4,8 +4,6 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { z } from "zod"
-import { useForm } from "react-hook-form"
-import { zodResolver } from "@hookform/resolvers/zod"
 import { api } from "@/lib/api"
 import { useToast } from "@/components/ui/use-toast"
 import { Button } from "@/components/ui/button"
@@ -33,37 +31,67 @@ type SignupFormValues = z.infer<typeof signupSchema>
 
 export default function SignupPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
+  const [formData, setFormData] = useState<SignupFormValues>({
+    username: '',
+    email: '',
+    password: '',
+    role: 'user'
+  })
   const router = useRouter()
   const { toast } = useToast()
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<SignupFormValues>({
-    resolver: zodResolver(signupSchema),
-  })
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }))
+  }
 
-  const onSubmit = async (data: SignupFormValues) => {
+  const handleRoleChange = (value: string) => {
+    setFormData(prev => ({
+      ...prev,
+      role: value as 'user' | 'instructor'
+    }))
+  }
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
     setIsSubmitting(true)
+    setValidationErrors({})
 
     try {
-      const response = await api.signup({
-        username: data.username,
-        email: data.email,
-        password: data.password,
-        role: data.role
-      })
+      // Validate form data
+      const validationResult = signupSchema.safeParse(formData)
+      if (!validationResult.success) {
+        const errors: Record<string, string> = {}
+        validationResult.error.errors.forEach(error => {
+          if (error.path[0]) {
+            errors[error.path[0].toString()] = error.message
+          }
+        })
+        setValidationErrors(errors)
+        setIsSubmitting(false)
+        return
+      }
 
-      localStorage.setItem("token", response.token)
-
-      toast({
-        title: "Account created successfully!",
-        description: "Welcome to FitForge!",
-        duration: 5000,
-      })
-
-      router.push("/")
+      const response = await api.signup(formData)
+      
+      if (response.token) {
+        localStorage.setItem("token", response.token)
+        toast({
+          title: "Account created successfully!",
+          description: "Welcome to FitForge!",
+          duration: 5000,
+        })
+        
+        // Add a small delay to ensure token is stored
+        await new Promise(resolve => setTimeout(resolve, 100))
+        router.push("/")
+      } else {
+        throw new Error("No token received from server")
+      }
     } catch (error: any) {
       console.error('Signup error:', error);
       toast({
@@ -85,33 +113,55 @@ export default function SignupPage() {
           <CardDescription>Enter your information to create your FitForge account</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="username">Username</Label>
-              <Input id="username" placeholder="johndoe" {...register("username")} />
-              {errors.username && <p className="text-sm text-red-500">{errors.username.message}</p>}
+              <Input 
+                id="username" 
+                name="username"
+                placeholder="johndoe" 
+                value={formData.username}
+                onChange={handleInputChange}
+              />
+              {validationErrors.username && (
+                <p className="text-sm text-red-500">{validationErrors.username}</p>
+              )}
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" placeholder="john@example.com" {...register("email")} />
-              {errors.email && <p className="text-sm text-red-500">{errors.email.message}</p>}
+              <Input 
+                id="email" 
+                name="email"
+                type="email" 
+                placeholder="john@example.com" 
+                value={formData.email}
+                onChange={handleInputChange}
+              />
+              {validationErrors.email && (
+                <p className="text-sm text-red-500">{validationErrors.email}</p>
+              )}
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
-              <Input id="password" type="password" {...register("password")} />
-              {errors.password && <p className="text-sm text-red-500">{errors.password.message}</p>}
+              <Input 
+                id="password"
+                name="password"
+                type="password" 
+                value={formData.password}
+                onChange={handleInputChange}
+              />
+              {validationErrors.password && (
+                <p className="text-sm text-red-500">{validationErrors.password}</p>
+              )}
             </div>
 
             <div className="space-y-2">
               <Label>Account Type</Label>
               <RadioGroup
-                defaultValue="user"
-                onValueChange={(value) => {
-                  const event = { target: { value, name: "role" } };
-                  register("role").onChange(event);
-                }}
+                value={formData.role}
+                onValueChange={handleRoleChange}
                 className="flex gap-4"
               >
                 <div className="flex items-center space-x-2">
@@ -123,7 +173,6 @@ export default function SignupPage() {
                   <Label htmlFor="instructor">Instructor</Label>
                 </div>
               </RadioGroup>
-              {errors.role && <p className="text-sm text-red-500">{errors.role.message}</p>}
             </div>
 
             <Button type="submit" className="w-full" disabled={isSubmitting}>

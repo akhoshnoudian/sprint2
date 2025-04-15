@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useToast } from "@/components/ui/use-toast"
 import { Button } from "@/components/ui/button"
-import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import Image from "next/image"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from '@/components/ui/badge'
@@ -16,7 +17,10 @@ interface Course {
   description: string
   instructor: string
   difficulty: string
+  rating: number
   price: number
+  thumbnail: string
+  instructorVerified: boolean
   video_urls?: string[]
 }
 
@@ -106,6 +110,7 @@ export default function CourseDetails({ courseId }: { courseId: string }) {
         const courseData = await api.getCourse(courseId);
         if (!mounted) return;
         setCourse(courseData);
+        console.log('Fetched course:', courseData);
 
         // Fetch user data
         const userData = await api.getCurrentUser();
@@ -235,6 +240,12 @@ export default function CourseDetails({ courseId }: { courseId: string }) {
                 <Badge variant={course.difficulty.toLowerCase() === 'beginner' ? 'default' : course.difficulty.toLowerCase() === 'intermediate' ? 'secondary' : 'destructive'}>
                   {course.difficulty}
                 </Badge>
+                <Badge variant="outline">{(course.rating ?? 0).toFixed(1)} ★</Badge>
+                {course.instructorVerified && (
+                  <Badge variant="secondary" className="bg-green-100 text-green-800">
+                    Verified Instructor
+                  </Badge>
+                )}
               </div>
             </div>
             <Button onClick={() => window.history.back()}>Back to Courses</Button>
@@ -284,6 +295,13 @@ export default function CourseDetails({ courseId }: { courseId: string }) {
                 </div>
               </div>
               <div className="mt-6 bg-gray-50 p-4 rounded-lg">
+                <Image
+                  src={`https://ui-avatars.com/api/?name=${encodeURIComponent(course.title)}&size=400&background=random`}
+                  alt={course.title}
+                  width={800}
+                  height={400}
+                  className="rounded-lg w-full h-64 object-cover mb-4"
+                />
                 <h4 className="font-medium mb-2">What you'll learn:</h4>
                 <ul className="list-disc list-inside space-y-2 text-gray-600">
                   <li>Full access to {course.video_urls?.length || 0} course videos</li>

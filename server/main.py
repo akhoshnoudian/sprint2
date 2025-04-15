@@ -1,8 +1,21 @@
 import os
 import re
+import json
 import logging
 import shutil
+from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException, status, Query, Request, File, UploadFile, Form
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from bson import ObjectId
+
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, ObjectId):
+            return str(obj)
+        return super().default(obj)
 from tempfile import NamedTemporaryFile
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.responses import JSONResponse
@@ -37,28 +50,42 @@ courses_collection = db['courses']  # Courses collection
 
 # @app.on_event("startup")
 # async def startup_event():
-#     # Add sample courses if none exist
-#     sample_courses = [
-#         {
-#             "title": "Beginner Yoga",
-#             "description": "Perfect for those new to yoga",
-#             "difficulty": "beginner",
-#             "rating": 5,
-#             "price": 29.99
-#         },
-#         {
-#             "title": "Advanced HIIT",
-#             "description": "High-intensity interval training for experienced athletes",
-#             "difficulty": "advanced",
-#             "rating": 4,
-#             "price": 49.99
-#         }
-#     ]
+#        # Return mock courses with updated instructor format
+mock_courses = [
+    {
+        "_id": "1",
+        "title": "Introduction to Python",
+        "description": "Learn Python programming from scratch",
+        "instructor": {
+            "username": "John Doe",
+            "isVerified": True
+        },
+        "level": "Beginner",
+        "rating": 4.5,
+        "price": 49.99,
+        "thumbnail": "https://example.com/python.jpg",
+        "duration": "6 weeks"
+    },
+    {
+        "_id": "2",
+        "title": "Web Development with React",
+        "description": "Master React.js and build modern web apps",
+        "instructor": {
+            "username": "Jane Smith",
+            "isVerified": False
+        },
+        "level": "Intermediate",
+        "rating": 4.8,
+        "price": 79.99,
+        "thumbnail": "https://example.com/react.jpg",
+        "duration": "8 weeks"
+    }
+]
 
-#     # Insert sample courses if collection is empty
-#     if courses_collection.count_documents({}) == 0:
-#         courses_collection.insert_many(sample_courses)
-#         logger.info("Added sample courses to database")
+# Insert sample courses if collection is empty
+if courses_collection.count_documents({}) == 0:
+    courses_collection.insert_many(mock_courses)
+    logger.info("Added sample courses to database")
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -176,6 +203,31 @@ class LoginRequest(BaseModel):
 
 # Token validation middleware
 def get_current_user(token: str = Depends(oauth2_scheme)):
+    """Get current user from token"""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return username
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    return username
+
+def get_admin_user(token: str = Depends(oauth2_scheme)):
+    """Check if user is admin"""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username != "sample":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this resource",
+                headers=CORS_HEADERS
+            )
+    except JWTError:
+        raise credentials_exception
+    return username
     try:
         logger.info(f"Validating token: {token[:20]}...")
         logger.info(f"Using SECRET_KEY: {SECRET_KEY[:5]}...")
@@ -216,14 +268,14 @@ async def signup(user: User):
         # Hash the password
         hashed_password = get_password_hash(user.password)
         
-        # Create user document
+        # Create user document with default values
         user_doc = {
             "username": user.username,
             "email": user.email,
             "password": hashed_password,
             "role": user.role,
-            "balance": user.balance,
-            "purchased_courses": user.purchased_courses  # List of purchased course IDs
+            "balance": 0,  # Default balance
+            "purchased_courses": []  # Default empty list
         }
         
         # Insert the user
@@ -258,6 +310,104 @@ async def signup(user: User):
 async def login_options():
     return JSONResponse(content={}, headers=CORS_HEADERS)
 
+# Admin endpoints
+@app.options("/admin/instructors")
+async def admin_instructors_options():
+    return JSONResponse(content={}, headers=CORS_HEADERS)
+
+class AdminLoginRequest(BaseModel):
+    username: str
+    password: str
+
+@app.post("/admin/login")
+async def admin_login(request: AdminLoginRequest):
+    try:
+        # Check hardcoded admin credentials
+        if request.username == "sample" and request.password == "123":
+            # Create admin token
+            token = create_access_token(data={"sub": "admin", "role": "admin"})
+            return JSONResponse(
+                content={"token": token},
+                headers=CORS_HEADERS
+            )
+        raise HTTPException(status_code=401, detail="Invalid admin credentials")
+    except Exception as e:
+        logger.error(f"Error in admin login: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Internal server error"},
+            headers=CORS_HEADERS
+        )
+
+@app.get("/admin/instructors")
+async def get_instructors(request: Request):
+    try:
+        # Get auth token from header
+        token = request.headers.get('authorization', '')
+        if not token.startswith('Bearer ') or token.split()[1] != 'admin-token-123':
+            raise HTTPException(status_code=403, detail="Admin access required")
+
+        # Get instructors from database with consistent field name
+        instructors = list(users_collection.find(
+            {"role": "instructor"},
+            {"_id": 1, "username": 1, "email": 1, "role": 1, "isVerified": 1}
+        ))
+        
+        # Use custom encoder to handle datetime and ObjectId
+        content = json.loads(json.dumps(instructors, cls=CustomJSONEncoder))
+        return JSONResponse(content=content, headers=CORS_HEADERS)
+    except Exception as e:
+        logger.error(f"Error getting instructors: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Failed to get instructors"},
+            headers=CORS_HEADERS
+        )
+
+@app.options("/admin/instructors/{instructor_id}/verify")
+async def verify_instructor_options(instructor_id: str):
+    return JSONResponse(content={}, headers=CORS_HEADERS)
+
+@app.put("/admin/instructors/{instructor_id}/verify")
+async def verify_instructor(
+    request: Request,
+    instructor_id: str,
+    verify_data: dict
+):
+    try:
+        # Get auth token from header
+        token = request.headers.get('authorization', '')
+        if not token.startswith('Bearer ') or token.split()[1] != 'admin-token-123':
+            raise HTTPException(status_code=403, detail="Admin access required")
+
+        # Update instructor verification in database
+        result = users_collection.update_one(
+            {"_id": ObjectId(instructor_id), "role": "instructor"},
+            {"$set": {"isVerified": verify_data.get("verify", False)}}
+        )
+
+        if result.modified_count == 0:
+            raise HTTPException(status_code=404, detail="Instructor not found")
+
+        # Get updated instructor data
+        updated_instructor = users_collection.find_one({"_id": ObjectId(instructor_id)})
+        if updated_instructor:
+            updated_instructor["_id"] = str(updated_instructor["_id"])
+            return JSONResponse(
+                content=json.loads(json.dumps(updated_instructor, cls=CustomJSONEncoder)), 
+                headers=CORS_HEADERS
+            )
+
+        return JSONResponse(content={"message": "Instructor verification updated"}, headers=CORS_HEADERS)
+    except Exception as e:
+        logger.error(f"Error verifying instructor: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Failed to update instructor verification"},
+            headers=CORS_HEADERS
+        )
+
+# User endpoints
 @app.post("/login")
 async def login(request: LoginRequest):
     try:
@@ -301,7 +451,6 @@ class Course(BaseModel):
         return f"https://avatars.dicebear.com/api/initials/{encoded_title}.svg?background=%230066ff"
 
 
-
 @app.options("/courses")
 async def courses_options():
     return JSONResponse(content={}, headers=CORS_HEADERS)
@@ -316,38 +465,45 @@ async def get_courses(
         courses = list(courses_collection.find())
         logger.info(f"Found {len(courses)} courses in database")
         
-        # Format each course
-        formatted_courses = []
+        # Get all instructors and their verification status
+        all_instructors = list(users_collection.find({"role": "instructor"}))
+        logger.info(f"Found {len(all_instructors)} instructors")
+        
+        # Create instructor verification map
+        instructors = {}
+        for instructor in all_instructors:
+            username = instructor["username"]
+            is_verified = instructor.get("isVerified", False)
+            instructors[username] = is_verified
+            logger.info(f"Instructor {username} verification status: {is_verified}")
+        
+        # Convert ObjectId to string and add instructor verification status
         for course in courses:
-            # Convert ObjectId to string
             course["_id"] = str(course["_id"])
+            instructor_name = course["instructor"]
+            is_verified = instructors.get(instructor_name, False)
+            logger.info(f"Course {course['title']} instructor {instructor_name} verification: {is_verified}")
             
-            # Add avatar URL
-            first_letter = course["title"][0].upper()
-            course["imageUrl"] = f"https://ui-avatars.com/api/?name={first_letter}&background=random&color=fff&size=128&rounded=true"
-            
-            # Convert datetime to string if needed
-            if "created_at" in course:
-                course["created_at"] = course["created_at"] if isinstance(course["created_at"], str) else course["created_at"].isoformat()
-            
-            formatted_courses.append(course)
-            logger.info(f"Formatted course: {course}")
+            course["instructor"] = {
+                "username": instructor_name,
+                "isVerified": is_verified
+            }
         
         # Apply filters if provided
         if difficulty:
-            formatted_courses = [c for c in formatted_courses if c.get("difficulty") == difficulty]
+            courses = [c for c in courses if c.get("difficulty") == difficulty]
         
         if rating:
             try:
                 parsed_rating = float(rating)
                 if 0 <= parsed_rating <= 5:
-                    formatted_courses = [c for c in formatted_courses if c.get("ratings", 0) >= parsed_rating]
+                    courses = [c for c in courses if c.get("ratings", 0) >= parsed_rating]
             except ValueError:
                 pass
         
-        logger.info(f"Returning {len(formatted_courses)} courses after filtering")
+        logger.info(f"Returning {len(courses)} courses after filtering")
         return JSONResponse(
-            content=formatted_courses,
+            content=courses,
             headers=CORS_HEADERS
         )
     except Exception as e:
@@ -528,13 +684,25 @@ async def courses_options():
     return JSONResponse(content={}, headers=CORS_HEADERS)
 
 @app.get("/courses")
-async def list_courses():
+async def get_courses(current_user: str = Depends(get_current_user)):
     try:
-        # Get all courses from the database
+        # Get all courses
         courses = list(courses_collection.find())
-        # Convert ObjectId to string for JSON serialization
+        
+        # Get all instructors and their verification status
+        instructors = {user["username"]: user.get("isVerified", False)
+                      for user in users_collection.find({"role": "instructor"})}
+        
+        # Convert ObjectId to string and add instructor verification status
         for course in courses:
             course["_id"] = str(course["_id"])
+            # Update instructor field to include verification status
+            instructor_name = course["instructor"]
+            course["instructor"] = {
+                "username": instructor_name,
+                "isVerified": instructors.get(instructor_name, False)
+            }
+        
         return JSONResponse(content=courses, headers=CORS_HEADERS)
     except Exception as e:
         logger.error(f"Error listing courses: {str(e)}")
@@ -548,20 +716,48 @@ async def list_courses():
 async def course_detail_options(course_id: str):
     return JSONResponse(content={}, headers=CORS_HEADERS)
 
-@app.options("/courses/{course_id}")
-async def course_detail_options(course_id: str):
-    return JSONResponse(content={}, headers=CORS_HEADERS)
-
 @app.get("/courses/{course_id}")
-async def get_course(course_id: str):
+async def get_course(request: Request, course_id: str):
+    # Get token from Authorization header
+    auth_header = request.headers.get('authorization', '')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "Missing or invalid token"},
+            headers=CORS_HEADERS
+        )
+    
+    token = auth_header.split(' ')[1]
     try:
-        logger.info(f"Fetching course with ID: {course_id}")
-        # Convert string ID to ObjectId
+        # Special case for admin token
+        if token == 'admin-token-123':
+            current_user = 'admin'
+        else:
+            # Verify JWT token
+            try:
+                payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+                current_user = payload.get('sub')
+                if not current_user:
+                    raise HTTPException(status_code=401, detail="Invalid token")
+            except jwt.InvalidTokenError:
+                return JSONResponse(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    content={"detail": "Invalid token"},
+                    headers=CORS_HEADERS
+                )
+        
+        logger.info(f"Getting course {course_id} for user {current_user}")
+        # Get course details
+        logger.info(f"Fetching course details for {course_id}")
         course = courses_collection.find_one({"_id": ObjectId(course_id)})
         if course:
-            # Convert ObjectId to string for JSON serialization
+            # Get instructor verification status
+            instructor = users_collection.find_one({"username": course["instructor"], "role": "instructor"})
+            
+            # Convert ObjectId to string and add instructor verification status
             course["_id"] = str(course["_id"])
-            logger.info(f"Found course: {course}")
+            course["instructorVerified"] = instructor.get("isVerified", False) if instructor else False
+            
             return JSONResponse(content=course, headers=CORS_HEADERS)
         logger.warning(f"Course not found with ID: {course_id}")
         return JSONResponse(
@@ -699,8 +895,49 @@ def serialize_user(user):
     return user
 
 @app.get("/users/me")
-async def get_current_user_info(current_user: str = Depends(get_current_user)):
+async def get_current_user_info(request: Request):
+    # Get token from Authorization header
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "Missing or invalid token"},
+            headers=CORS_HEADERS
+        )
+    
+    token = auth_header.split(' ')[1]
     try:
+        # Special case for admin token
+        if token == 'admin-token-123':
+            current_user = 'admin'
+            # Return admin user data
+            admin_data = {
+                "_id": "admin",
+                "username": "admin",
+                "email": "admin@example.com",
+                "role": "admin",
+                "isAdmin": True
+            }
+            return JSONResponse(content=admin_data, headers=CORS_HEADERS)
+        
+        # Verify JWT token
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+            current_user = payload.get('sub')
+            if not current_user:
+                return JSONResponse(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    content={"detail": "Invalid token"},
+                    headers=CORS_HEADERS
+                )
+        except jwt.InvalidTokenError:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Invalid token"},
+                headers=CORS_HEADERS
+            )
+        
+        # Get user data
         user = users_collection.find_one({"username": current_user})
         if user:
             serialized_user = serialize_user(user)

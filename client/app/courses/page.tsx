@@ -11,10 +11,12 @@ interface Course {
   _id: string
   title: string
   description: string
-  difficulty: 'beginner' | 'intermediate' | 'advanced'
-  price: number
-  ratings: number
   instructor: string
+  difficulty: string
+  rating: number
+  price: number
+  thumbnail: string
+  instructorVerified: boolean
 }
 
 export default function CoursesPage() {
@@ -64,7 +66,7 @@ export default function CoursesPage() {
               <CardTitle className="text-xl mb-2">{course.title}</CardTitle>
               <div className="flex gap-2">
                 <Badge variant="secondary">{course.difficulty}</Badge>
-                <Badge variant="outline">Rating: {course.ratings}/5</Badge>
+                <Badge variant="outline">Rating: {course.rating}/5</Badge>
               </div>
             </CardHeader>
             <CardContent>

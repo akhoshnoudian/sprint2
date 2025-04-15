@@ -1,14 +1,23 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { usePathname } from "next/navigation"
-import { Button } from "@/components/ui/button"
+import { Button } from "./ui/button"
+import Link from "next/link"
 import { Dumbbell } from "lucide-react"
 import axios from "@/lib/axios"
 import { useToast } from "@/components/ui/use-toast"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu"
+import { Avatar, AvatarFallback } from "./ui/avatar"
 
 export default function Navbar() {
+  const router = useRouter()
   const [user, setUser] = useState<{ username: string; role: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const pathname = usePathname()
@@ -25,14 +34,31 @@ export default function Navbar() {
 
   const fetchUserInfo = async (token: string) => {
     try {
-      const tokenData = JSON.parse(atob(token.split('.')[1]));
-      setUser({
-        username: tokenData.sub,
-        role: tokenData.role || 'user'
-      })
+      // Handle admin token separately
+      if (token === 'admin-token-123') {
+        setUser({
+          username: 'Admin',
+          role: 'admin'
+        });
+        return;
+      }
+
+      // Handle regular JWT tokens
+      try {
+        const tokenData = JSON.parse(atob(token.split('.')[1]));
+        setUser({
+          username: tokenData.sub,
+          role: tokenData.role || 'user'
+        });
+      } catch (error) {
+        console.error('Error parsing token:', error);
+        localStorage.removeItem('token');
+        setUser(null);
+      }
     } catch (error) {
-      console.error("Failed to parse token:", error)
-      localStorage.removeItem("token")
+      console.error('Error fetching user info:', error);
+      localStorage.removeItem('token');
+      setUser(null);
     } finally {
       setLoading(false)
     }
@@ -60,21 +86,57 @@ export default function Navbar() {
           {!loading && (
             <>
               {user ? (
-                <>
-                  <span className="text-sm">Welcome, {user.username}</span>
-                  {user.role === "instructor" && (
-                    <Link href="/create-course">
-                      <Button variant="outline" size="sm">
-                        Instructor Panel
-                      </Button>
-                    </Link>
+                <div className="flex items-center gap-4">
+                  {user.role === 'admin' && (
+                    <Button
+                      variant="outline"
+                      onClick={() => router.push('/admin')}
+                      className="hidden md:flex"
+                    >
+                      Admin Panel
+                    </Button>
                   )}
-                  <Button variant="ghost" size="sm" onClick={handleLogout}>
-                    Logout
-                  </Button>
-                </>
+                  {user.role === 'instructor' && (
+                    <Button
+                      variant="outline"
+                      onClick={() => router.push('/instructor/upload')}
+                      className="hidden md:flex"
+                    >
+                      Instructor Panel
+                    </Button>
+                  )}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger>
+                      <Avatar>
+                        <AvatarFallback>{user.username[0].toUpperCase()}</AvatarFallback>
+                      </Avatar>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent>
+                      {/* {user.role === 'admin' && (
+                        <DropdownMenuItem onClick={() => router.push('/admin')}>
+                          Admin Panel
+                        </DropdownMenuItem>
+                      )}
+                      {user.role === 'instructor' && (
+                        <DropdownMenuItem onClick={() => router.push('/instructor/upload')}>
+                          Instructor Panel
+                        </DropdownMenuItem>
+                      )} */}
+                      <DropdownMenuItem
+                        onClick={() => {
+                          localStorage.removeItem('token')
+                          localStorage.removeItem('isAdmin')
+                          setUser(null)
+                          router.push('/')
+                        }}
+                      >
+                        Logout
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               ) : (
-                <>
+                <div className="flex items-center gap-4">
                   <Link href="/login">
                     <Button variant="ghost" size="sm">
                       Login
@@ -85,7 +147,7 @@ export default function Navbar() {
                       Sign Up
                     </Button>
                   </Link>
-                </>
+                </div>
               )}
             </>
           )}
