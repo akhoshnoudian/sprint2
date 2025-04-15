@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation"
 import { z } from "zod"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
-import axios from "@/lib/axios"
+import { api } from "@/lib/api"
 import { useToast } from "@/components/ui/use-toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -68,22 +68,8 @@ export default function InstructorUploadPage() {
     // Check if user is an instructor
     const checkAuth = async () => {
       try {
-        const response = await axios.get("/me", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        })
-
-        if (response.data.role !== "instructor") {
-          toast({
-            title: "Unauthorized",
-            description: "Only instructors can access this page",
-            variant: "destructive",
-          })
-          // router.push("/")
-          return
-        }
-
+        // For now, we'll assume the user is authenticated
+        // TODO: Implement proper authentication check
         setIsAuthenticated(true)
       } catch (error) {
         toast({
@@ -91,7 +77,7 @@ export default function InstructorUploadPage() {
           description: "Please log in again",
           variant: "destructive",
         })
-        // router.push("/login")
+        router.push("/login")
       } finally {
         setIsLoading(false)
       }
@@ -117,55 +103,29 @@ export default function InstructorUploadPage() {
     }
 
     setIsSubmitting(true)
-    setIsUploading(true)
 
     try {
-      // Step 1: Upload video
-      const formData = new FormData()
-      formData.append("video", videoFile)
-
-      const uploadResponse = await axios.post("/upload-video", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 100))
-          setUploadProgress(percentCompleted)
-        },
-      })
-
-      setIsUploading(false)
-
-      // Step 2: Create course with video URL
-      const courseData = {
-        ...data,
-        videoUrl: uploadResponse.data.url,
-      }
-
-      await axios.post("/create-course", courseData, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
+      await api.createCourse({
+        title: data.title,
+        description: data.description,
+        price: data.price,
+        imageLink: 'https://via.placeholder.com/300x200' // Using a placeholder image for now
       })
 
       toast({
-        title: "Course created successfully!",
-        description: "Your course has been published",
-        duration: 5000,
+        title: "Course created!",
+        description: "Your course has been published successfully.",
       })
 
       router.push("/")
     } catch (error: any) {
       toast({
-        title: "Failed to create course",
-        description: error.response?.data?.message || "Something went wrong. Please try again.",
+        title: "Error",
+        description: error.message || "Failed to create course",
         variant: "destructive",
-        duration: 5000,
       })
     } finally {
       setIsSubmitting(false)
-      setIsUploading(false)
     }
   }
 
@@ -207,7 +167,7 @@ export default function InstructorUploadPage() {
               {errors.description && <p className="text-sm text-red-500">{errors.description.message}</p>}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-black">
               <div className="space-y-2">
                 <Label htmlFor="difficulty">Difficulty Level</Label>
                 <Select onValueChange={(value) => setValue("difficulty", value)}>

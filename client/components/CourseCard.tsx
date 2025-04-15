@@ -6,10 +6,12 @@ import { Star } from 'lucide-react';
 interface CourseCardProps {
   title: string;
   instructor: string;
-  difficulty: 'Beginner' | 'Intermediate' | 'Advanced';
+  difficulty: string;
   rating: number;
   imageUrl: string;
   price: number;
+  duration: string;
+  description: string;
 }
 
 export function CourseCard({
@@ -19,16 +21,17 @@ export function CourseCard({
   rating,
   imageUrl,
   price,
+  duration,
+  description,
 }: CourseCardProps) {
   return (
     <Card className="w-full max-w-sm hover:shadow-lg transition-shadow">
       <CardHeader className="p-0">
-        <div className="relative w-full h-48">
-          <Image
+        <div className="w-full h-48 bg-gray-100 rounded-t-lg flex items-center justify-center overflow-hidden">
+          <img
             src={imageUrl}
             alt={title}
-            fill
-            className="object-cover rounded-t-lg"
+            className="w-full h-full object-cover"
           />
         </div>
       </CardHeader>
@@ -36,7 +39,7 @@ export function CourseCard({
         <h3 className="font-semibold text-lg mb-2">{title}</h3>
         <p className="text-sm text-gray-600 mb-2">by {instructor}</p>
         <div className="flex items-center gap-2 mb-2">
-          <Badge variant={difficulty === 'Beginner' ? 'default' : difficulty === 'Intermediate' ? 'secondary' : 'destructive'}>
+          <Badge variant={difficulty.toLowerCase() === 'beginner' ? 'default' : difficulty.toLowerCase() === 'intermediate' ? 'secondary' : 'destructive'}>
             {difficulty}
           </Badge>
           <div className="flex items-center">

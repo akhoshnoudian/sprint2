@@ -6,18 +6,27 @@ import Link from "next/link"
 import { z } from "zod"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
-import axios from "@/lib/axios"
+import { api } from "@/lib/api"
 import { useToast } from "@/components/ui/use-toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Loader2 } from "lucide-react"
 
 const signupSchema = z.object({
-  username: z.string().min(3, "Username must be at least 3 characters"),
+  username: z.string().min(4, "Username must be at least 4 characters").max(50, "Username must be at most 50 characters"),
   email: z.string().email("Please enter a valid email address"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .regex(/[0-9]/, "Password must contain at least one number")
+    .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
+    .regex(/[!@#$%^&*(),.?":{}|<>]/, "Password must contain at least one special character"),
+  role: z.enum(["user", "instructor"], {
+    required_error: "Please select a role",
+  }),
 })
 
 type SignupFormValues = z.infer<typeof signupSchema>
@@ -39,9 +48,14 @@ export default function SignupPage() {
     setIsSubmitting(true)
 
     try {
-      const response = await axios.post("/signup", data)
+      const response = await api.signup({
+        username: data.username,
+        email: data.email,
+        password: data.password,
+        role: data.role
+      })
 
-      localStorage.setItem("token", response.data.token)
+      localStorage.setItem("token", response.token)
 
       toast({
         title: "Account created successfully!",
@@ -51,9 +65,10 @@ export default function SignupPage() {
 
       router.push("/")
     } catch (error: any) {
+      console.error('Signup error:', error);
       toast({
         title: "Sign up failed",
-        description: error.response?.data?.message || "Something went wrong. Please try again.",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive",
         duration: 5000,
       })
@@ -87,6 +102,28 @@ export default function SignupPage() {
               <Label htmlFor="password">Password</Label>
               <Input id="password" type="password" {...register("password")} />
               {errors.password && <p className="text-sm text-red-500">{errors.password.message}</p>}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Account Type</Label>
+              <RadioGroup
+                defaultValue="user"
+                onValueChange={(value) => {
+                  const event = { target: { value, name: "role" } };
+                  register("role").onChange(event);
+                }}
+                className="flex gap-4"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="user" id="user" />
+                  <Label htmlFor="user">Student</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="instructor" id="instructor" />
+                  <Label htmlFor="instructor">Instructor</Label>
+                </div>
+              </RadioGroup>
+              {errors.role && <p className="text-sm text-red-500">{errors.role.message}</p>}
             </div>
 
             <Button type="submit" className="w-full" disabled={isSubmitting}>

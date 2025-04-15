@@ -4,17 +4,21 @@ import { useState, useEffect } from "react"
 import { Loader2 } from "lucide-react"
 import { CourseCard } from "@/components/CourseCard"
 import { CourseFilterSidebar } from "@/components/CourseFilterSidebar"
-import { dummyCourses } from "@/lib/dummy-data"
+import { api } from "@/lib/api"
 
 interface Course {
-  id: string
-  title: string
-  description: string
-  price: number
-  difficulty: string
-  rating: number
-  instructor: string
-  imageUrl: string
+  _id: string;
+  title: string;
+  instructor: string;
+  difficulty: string;
+  rating?: number;
+  ratings?: number;
+  imageUrl: string;
+  price: number;
+  duration?: string;
+  description: string;
+  video_urls?: string[];
+  created_at?: string;
 }
 
 export default function HomePage() {
@@ -27,17 +31,36 @@ export default function HomePage() {
     fetchCourses()
   }, [selectedDifficulty, selectedRating])
 
-  const fetchCourses = () => {
-    setLoading(true)
-    setTimeout(() => {
-      const filteredCourses = dummyCourses.filter(course => {
-        const matchesDifficulty = selectedDifficulty === "all" || course.difficulty === selectedDifficulty;
-        const matchesRating = course.rating >= selectedRating[0] && course.rating <= selectedRating[1];
-        return matchesDifficulty && matchesRating;
-      });
-      setCourses(filteredCourses);
-      setLoading(false);
-    }, 500); // Simulate network delay
+  const fetchCourses = async () => {
+    try {
+      setLoading(true)
+      const token = localStorage.getItem('token')
+      const response = await fetch('/api/courses', {
+        cache: 'no-store',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : ''
+        }
+      })
+      const data = await response.json()
+      console.log('Fetched courses:', data)
+      
+      const filteredCourses = data.filter((course: Course) => {
+        const courseDifficulty = course.difficulty.toLowerCase()
+        const matchesDifficulty = selectedDifficulty === "all" || courseDifficulty === selectedDifficulty.toLowerCase()
+        
+        const courseRating = course.rating || course.ratings || 0
+        const matchesRating = courseRating >= selectedRating[0] && courseRating <= selectedRating[1]
+        
+        return matchesDifficulty && matchesRating
+      })
+      
+      console.log('Filtered courses:', filteredCourses)
+      setCourses(filteredCourses)
+    } catch (error) {
+      console.error('Error fetching courses:', error)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -63,13 +86,15 @@ export default function HomePage() {
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               {courses.map((course) => (
                 <CourseCard
-                  key={course.id}
+                  key={course._id}
                   title={course.title}
                   instructor={course.instructor}
-                  difficulty={course.difficulty as 'Beginner' | 'Intermediate' | 'Advanced'}
-                  rating={course.rating}
+                  difficulty={course.difficulty}
+                  rating={course.rating || course.ratings || 0}
                   imageUrl={course.imageUrl}
                   price={course.price}
+                  duration={course.duration || '30 minutes'}
+                  description={course.description}
                 />
               ))}
             </div>

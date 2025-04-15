@@ -16,21 +16,22 @@ export default function Navbar() {
 
   useEffect(() => {
     const token = localStorage.getItem("token")
-    setLoading(false)
-    fetchUserInfo(token!!)
+    if (token) {
+      fetchUserInfo(token)
+    } else {
+      setLoading(false)
+    }
   }, [pathname])
 
   const fetchUserInfo = async (token: string) => {
     try {
-      // const response = await axios.get("/me", {
-      //   headers: {
-      //     Authorization: `Bearer ${token}`,
-      //   },
-      // })
-      // setUser(response.data)
-      setUser({username: "sample", role: "instructor"})
+      const tokenData = JSON.parse(atob(token.split('.')[1]));
+      setUser({
+        username: tokenData.sub,
+        role: tokenData.role || 'user'
+      })
     } catch (error) {
-      console.error("Failed to fetch user info:", error)
+      console.error("Failed to parse token:", error)
       localStorage.removeItem("token")
     } finally {
       setLoading(false)
@@ -62,7 +63,7 @@ export default function Navbar() {
                 <>
                   <span className="text-sm">Welcome, {user.username}</span>
                   {user.role === "instructor" && (
-                    <Link href="/instructor/upload">
+                    <Link href="/create-course">
                       <Button variant="outline" size="sm">
                         Instructor Panel
                       </Button>

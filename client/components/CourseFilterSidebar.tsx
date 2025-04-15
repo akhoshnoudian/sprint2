@@ -16,7 +16,7 @@ export function CourseFilterSidebar({
   selectedRating,
 }: CourseFilterSidebarProps) {
   return (
-    <div className="w-64 p-4 space-y-6 bg-white rounded-lg shadow-sm">
+    <div className="w-64 p-4 space-y-6 bg-white rounded-lg shadow-sm text-black max-h-[fit-content]">
       <div className="space-y-4">
         <h3 className="font-semibold text-lg">Difficulty Level</h3>
         <RadioGroup

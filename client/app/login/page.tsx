@@ -6,7 +6,7 @@ import Link from "next/link"
 import { z } from "zod"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
-import axios from "@/lib/axios"
+import { api } from "@/lib/api"
 import { useToast } from "@/components/ui/use-toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -15,7 +15,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Loader2 } from "lucide-react"
 
 const loginSchema = z.object({
-  email: z.string().email("Please enter a valid email address"),
+  email: z.string().email("Please enter a valid email"),
   password: z.string().min(1, "Password is required"),
 })
 
@@ -23,6 +23,7 @@ type LoginFormValues = z.infer<typeof loginSchema>
 
 export default function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string>('')
   const router = useRouter()
   const { toast } = useToast()
 
@@ -36,11 +37,15 @@ export default function LoginPage() {
 
   const onSubmit = async (data: LoginFormValues) => {
     setIsSubmitting(true)
+    setError('') // Clear any previous errors
 
     try {
-      // const response = await axios.post("/login", data)
+      const response = await api.login({
+        email: data.email,
+        password: data.password
+      })
 
-      // localStorage.setItem("token", response.data.token)
+      localStorage.setItem("token", response.token)
 
       toast({
         title: "Login successful!",
@@ -50,12 +55,8 @@ export default function LoginPage() {
 
       router.push("/")
     } catch (error: any) {
-      toast({
-        title: "Login failed",
-        description: error.response?.data?.message || "Invalid email or password",
-        variant: "destructive",
-        duration: 5000,
-      })
+      console.error('Login error:', error);
+      setError(error.message || 'Invalid email or password')
     } finally {
       setIsSubmitting(false)
     }
@@ -81,6 +82,12 @@ export default function LoginPage() {
               <Input id="password" type="password" {...register("password")} />
               {errors.password && <p className="text-sm text-red-500">{errors.password.message}</p>}
             </div>
+
+            {error && (
+              <div className="p-3 rounded-md bg-red-50 border border-red-200">
+                <p className="text-sm text-red-600">{error}</p>
+              </div>
+            )}
 
             <Button type="submit" className="w-full" disabled={isSubmitting}>
               {isSubmitting ? (
