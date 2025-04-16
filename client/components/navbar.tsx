@@ -89,7 +89,7 @@ export default function Navbar() {
         )}
 
         <nav className="flex items-center space-x-4">
-          <div>{user?.role}</div>
+        <div>{user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : ''}</div>
           {!loading && (
             <>
               {user ? (
