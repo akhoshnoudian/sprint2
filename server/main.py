@@ -47,6 +47,7 @@ client = MongoClient(MONGO_URI)
 db = client['yourdb']  # Use your database
 users_collection = db['users']  # Users collection
 courses_collection = db['courses']  # Courses collection
+reviews_collection = db['reviews']  # Reviews collection
 
 # @app.on_event("startup")
 # async def startup_event():
@@ -1029,6 +1030,165 @@ async def get_purchased_courses(request: Request):
         )
 
 
+# Review model
+class ReviewCreate(BaseModel):
+    rating: float = Field(..., ge=1, le=5)
+    comment: str = Field(..., min_length=1, max_length=500)
+
+class Review(ReviewCreate):
+    course_id: str
+    user_id: str
+    username: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+@app.options("/api/courses/{course_id}/reviews")
+async def reviews_options(course_id: str):
+    return JSONResponse(content={}, headers=CORS_HEADERS)
+
+@app.post("/api/courses/{course_id}/reviews")
+async def create_review(course_id: str, review_data: ReviewCreate, request: Request):
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Missing or invalid token"},
+                headers=CORS_HEADERS
+            )
+        
+        token = auth_header.split(' ')[1]
+        
+        # Verify JWT token
+        payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        current_user = payload.get('sub')
+        if not current_user:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Invalid token"},
+                headers=CORS_HEADERS
+            )
+        
+        # Get user data
+        user = users_collection.find_one({"username": current_user})
+        if not user:
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content={"detail": "User not found"},
+                headers=CORS_HEADERS
+            )
+        
+        # Check if user has purchased the course
+        if course_id not in user.get('purchased_courses', []):
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"detail": "You must purchase this course to review it"},
+                headers=CORS_HEADERS
+            )
+        
+        # Check if user has already reviewed this course
+        existing_review = reviews_collection.find_one({
+            "course_id": course_id,
+            "user_id": str(user['_id'])
+        })
+        
+        if existing_review:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": "You have already reviewed this course"},
+                headers=CORS_HEADERS
+            )
+        
+        # Create review
+        review_dict = review_data.dict()
+        review_dict["course_id"] = course_id
+        review_dict["user_id"] = str(user["_id"])
+        review_dict["username"] = user["username"]
+        review_dict["created_at"] = datetime.utcnow()
+        
+        result = reviews_collection.insert_one(review_dict)
+        
+        # Update course average rating
+        course_reviews = list(reviews_collection.find({"course_id": course_id}))
+        avg_rating = sum(review["rating"] for review in course_reviews) / len(course_reviews)
+        
+        courses_collection.update_one(
+            {"_id": ObjectId(course_id)},
+            {"$set": {"rating": round(avg_rating, 1)}}
+        )
+        
+        return JSONResponse(
+            content={
+                "message": "Review created successfully",
+                "review_id": str(result.inserted_id)
+            },
+            headers=CORS_HEADERS
+        )
+        
+    except jwt.InvalidTokenError:
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "Invalid token"},
+            headers=CORS_HEADERS
+        )
+    except Exception as e:
+        logger.error(f"Error creating review: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Internal server error"},
+            headers=CORS_HEADERS
+        )
+
+@app.get("/api/courses/{course_id}/reviews")
+async def get_course_reviews(course_id: str, token: str = Depends(oauth2_scheme)):
+    try:
+        logger.info(f"Fetching reviews for course: {course_id}")
+        logger.info(f"Token provided: {token[:10]}...")
+
+        # Verify token and get current user
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+            current_user = payload.get("sub")
+            logger.info(f"Current user from token: {current_user}")
+            if not current_user:
+                logger.error("No user found in token payload")
+                return JSONResponse(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    content={"detail": "Invalid token"},
+                    headers=CORS_HEADERS
+                )
+        except jwt.InvalidTokenError as e:
+            logger.error(f"Invalid token error: {str(e)}")
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Invalid token"},
+                headers=CORS_HEADERS
+            )
+
+        # Get reviews for the course
+        reviews = list(reviews_collection.find({"course_id": course_id}).sort("created_at", -1))
+        logger.info(f"Found {len(reviews)} reviews for course {course_id}")
+        
+        # Serialize reviews
+        serialized_reviews = []
+        for review in reviews:
+            review["_id"] = str(review["_id"])
+            review["created_at"] = review["created_at"].isoformat()
+            serialized_reviews.append(review)
+        
+        return JSONResponse(
+            content={"reviews": serialized_reviews},
+            headers=CORS_HEADERS
+        )
+        
+    except Exception as e:
+        logger.error(f"Error fetching reviews: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Internal server error"},
+            headers=CORS_HEADERS
+        )
+
 @app.get("/test-endpoints")
 async def test_endpoints():
     return {
@@ -1040,6 +1200,7 @@ async def test_endpoints():
             "/courses/{course_id}",
             "/signup",
             "/login",
-            "/api/users/purchased-courses"
+            "/api/users/purchased-courses",
+            "/api/courses/{course_id}/reviews"
         ]
     }

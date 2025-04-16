@@ -24,6 +24,16 @@ interface CourseData {
   video_urls: string[];
 }
 
+export interface Review {
+  _id: string;
+  course_id: string;
+  user_id: string;
+  username: string;
+  rating: number;
+  comment: string;
+  created_at: string;
+}
+
 interface Course {
   _id: string
   title: string
@@ -37,6 +47,9 @@ interface Course {
   price: number
   thumbnail: string
   duration: string
+  difficulty: string
+  instructorVerified: boolean
+  video_urls?: string[]
 }
 
 export const api = {
@@ -269,6 +282,50 @@ export const api = {
     
     if (!response.ok) {
       throw new Error(result.detail || 'Failed to fetch user info');
+    }
+    
+    return result;
+  },
+
+  getReviews: async (courseId: string): Promise<Review[]> => {
+    const response = await fetch(`${API_BASE_URL}/api/courses/${courseId}/reviews`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      },
+    });
+
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.detail || 'Failed to fetch reviews');
+    }
+    
+    return result.reviews;
+  },
+
+  createReview: async (courseId: string, rating: number, comment: string) => {
+    const response = await fetch(`${API_BASE_URL}/api/courses/${courseId}/reviews`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      },
+      body: JSON.stringify({
+        rating,
+        comment,
+      }),
+    });
+
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(result.detail || 'Failed to create review');
     }
     
     return result;

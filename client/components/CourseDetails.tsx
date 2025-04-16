@@ -10,16 +10,22 @@ import { Label } from "@/components/ui/label"
 import { Badge } from '@/components/ui/badge'
 import { Loader2 } from 'lucide-react'
 import { api } from "@/lib/api"
+import type { Review } from "@/lib/api"
 
 interface Course {
   _id: string
   title: string
   description: string
-  instructor: string
-  difficulty: string
+  instructor: {
+    username: string
+    isVerified: boolean
+  }
+  level: string
   rating: number
   price: number
   thumbnail: string
+  duration: string
+  difficulty: string
   instructorVerified: boolean
   video_urls?: string[]
 }
@@ -33,6 +39,13 @@ interface User {
 }
 
 export default function CourseDetails({ courseId }: { courseId: string }) {
+  const [reviews, setReviews] = useState<Review[]>([]);
+  console.log('Initial reviews state:', []);
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState('');
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+  const [reviewError, setReviewError] = useState('');
+
   const [course, setCourse] = useState<Course | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(false);
@@ -96,10 +109,58 @@ export default function CourseDetails({ courseId }: { courseId: string }) {
     }
   };
 
+  const fetchReviews = async () => {
+    try {
+      console.log('Fetching reviews for course:', courseId);
+      const reviewsData = await api.getReviews(courseId);
+      console.log('Received reviews:', reviewsData);
+      setReviews(reviewsData);
+    } catch (error) {
+      console.error('Error fetching reviews:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to fetch reviews',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleSubmitReview = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmittingReview(true);
+    setReviewError('');
+
+    try {
+      await api.createReview(courseId, rating, comment);
+      await fetchReviews(); // Refresh reviews
+      setComment('');
+      setRating(5);
+      toast({
+        title: 'Review submitted',
+        description: 'Thank you for your feedback!',
+      });
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : 'Failed to submit review');
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to submit review',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmittingReview(false);
+    }
+  };
+
+  // Debug reviews state changes
+  useEffect(() => {
+    console.log('Reviews state updated:', reviews);
+  }, [reviews]);
+
   useEffect(() => {
     let mounted = true;
 
     const fetchData = async () => {
+      console.log('Starting data fetch for course:', courseId);
       if (!courseId) return;
       
       setLoading(true);
@@ -116,6 +177,11 @@ export default function CourseDetails({ courseId }: { courseId: string }) {
         const userData = await api.getCurrentUser();
         if (!mounted) return;
         setUser(userData);
+        console.log('User data set:', userData);
+
+        // Fetch reviews
+        await fetchReviews();
+        console.log('Reviews fetched and set');
       } catch (error) {
         if (!mounted) return;
         console.error('Error fetching data:', error);
@@ -135,6 +201,7 @@ export default function CourseDetails({ courseId }: { courseId: string }) {
 
     fetchData();
 
+    fetchReviews();
     return () => {
       mounted = false;
     };
@@ -260,7 +327,7 @@ export default function CourseDetails({ courseId }: { courseId: string }) {
 
             <div>
               <h3 className="text-xl font-semibold mb-2">Instructor</h3>
-              <p className="text-gray-600">{course.instructor}</p>
+              <p className="text-gray-600">{course.instructor.username}</p>
             </div>
 
             <div className="mt-8 border-t pt-8">
@@ -330,6 +397,91 @@ export default function CourseDetails({ courseId }: { courseId: string }) {
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* Reviews Section */}
+            <div className="mt-8 border-t pt-8">
+              <h3 className="text-xl font-semibold mb-4">Reviews</h3>
+              
+              {/* Review Form - Only show for purchased courses */}
+              {isPurchased && (
+                <form onSubmit={handleSubmitReview} className="mb-8">
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="rating">Rating</Label>
+                      <div className="flex items-center space-x-2 mt-2">
+                        {[1, 2, 3, 4, 5].map((value) => (
+                          <Button
+                            key={value}
+                            type="button"
+                            variant={rating >= value ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => setRating(value)}
+                            className="w-8 h-8 p-0"
+                          >
+                            ★
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <Label htmlFor="comment">Your Review</Label>
+                      <Input
+                        id="comment"
+                        value={comment}
+                        onChange={(e) => setComment(e.target.value)}
+                        placeholder="Write your review here..."
+                        className="mt-2"
+                        required
+                      />
+                    </div>
+
+                    {reviewError && (
+                      <p className="text-red-500 text-sm">{reviewError}</p>
+                    )}
+
+                    <Button
+                      type="submit"
+                      disabled={isSubmittingReview || !comment.trim()}
+                    >
+                      {isSubmittingReview ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Submitting...
+                        </>
+                      ) : (
+                        'Submit Review'
+                      )}
+                    </Button>
+                  </div>
+                </form>
+              )}
+
+              {/* Reviews List */}
+              <div className="space-y-6">
+                {reviews.length === 0 ? (
+                  <p className="text-gray-500">No reviews yet. Be the first to review this course!</p>
+                ) : (
+                  reviews.map((review) => (
+                    <div key={review._id} className="border rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <p className="font-medium">{review.username}</p>
+                          <p className="text-sm text-gray-500">
+                            {new Date(review.created_at).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <div className="flex items-center">
+                          <span className="text-yellow-400 mr-1">★</span>
+                          <span>{review.rating.toFixed(1)}</span>
+                        </div>
+                      </div>
+                      <p className="text-gray-700">{review.comment}</p>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </CardContent>

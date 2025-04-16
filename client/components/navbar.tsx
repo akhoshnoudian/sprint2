@@ -119,9 +119,7 @@ export default function Navbar() {
                       </Avatar>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent>
-                      <DropdownMenuItem onClick={() => router.push('/my-courses')}>
-                        My Courses
-                      </DropdownMenuItem>
+                      
                       <DropdownMenuItem
                         onClick={() => {
                           localStorage.removeItem('token')
