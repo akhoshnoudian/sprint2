@@ -87,6 +87,13 @@ export default function Navbar() {
             <>
               {user ? (
                 <div className="flex items-center gap-4">
+                  <Button
+                    variant="outline"
+                    onClick={() => router.push('/my-courses')}
+                    className="hidden md:flex"
+                  >
+                    My Courses
+                  </Button>
                   {user.role === 'admin' && (
                     <Button
                       variant="outline"
@@ -112,16 +119,9 @@ export default function Navbar() {
                       </Avatar>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent>
-                      {/* {user.role === 'admin' && (
-                        <DropdownMenuItem onClick={() => router.push('/admin')}>
-                          Admin Panel
-                        </DropdownMenuItem>
-                      )}
-                      {user.role === 'instructor' && (
-                        <DropdownMenuItem onClick={() => router.push('/instructor/upload')}>
-                          Instructor Panel
-                        </DropdownMenuItem>
-                      )} */}
+                      <DropdownMenuItem onClick={() => router.push('/my-courses')}>
+                        My Courses
+                      </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => {
                           localStorage.removeItem('token')

@@ -955,6 +955,80 @@ async def get_current_user_info(request: Request):
             headers=CORS_HEADERS
         )
 
+@app.options("/api/users/purchased-courses")
+async def purchased_courses_options():
+    return JSONResponse(content={}, headers=CORS_HEADERS)
+
+@app.get("/api/users/purchased-courses")
+async def get_purchased_courses(request: Request):
+    # Get token from Authorization header
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "Missing or invalid token"},
+            headers=CORS_HEADERS
+        )
+    
+    token = auth_header.split(' ')[1]
+    try:
+        # Verify JWT token
+        payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        current_user = payload.get('sub')
+        if not current_user:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Invalid token"},
+                headers=CORS_HEADERS
+            )
+            
+        # Get user data
+        user = users_collection.find_one({"username": current_user})
+        if not user:
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content={"detail": "User not found"},
+                headers=CORS_HEADERS
+            )
+        
+        # Get purchased courses from the user's purchased_courses array
+        purchased_course_ids = user.get('purchased_courses', [])
+        logger.info(f"Found purchased_course_ids: {purchased_course_ids}")
+        
+        # Convert string IDs to ObjectId
+        object_ids = [ObjectId(id_str) for id_str in purchased_course_ids]
+        logger.info(f"Converted to ObjectIds: {object_ids}")
+        
+        # Query courses
+        purchased_courses = list(courses_collection.find({"_id": {"$in": object_ids}}))
+        logger.info(f"Found courses: {purchased_courses}")
+        
+        # Serialize courses
+        serialized_courses = []
+        for course in purchased_courses:
+            course['_id'] = str(course['_id'])
+            serialized_courses.append(course)
+        
+        return JSONResponse(
+            content={"purchasedCourses": serialized_courses},
+            headers=CORS_HEADERS
+        )
+            
+    except jwt.InvalidTokenError:
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "Invalid token"},
+            headers=CORS_HEADERS
+        )
+    except Exception as e:
+        logger.error(f"Error fetching purchased courses: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Internal server error"},
+            headers=CORS_HEADERS
+        )
+
+
 @app.get("/test-endpoints")
 async def test_endpoints():
     return {
@@ -965,6 +1039,7 @@ async def test_endpoints():
             "/courses",
             "/courses/{course_id}",
             "/signup",
-            "/login"
+            "/login",
+            "/api/users/purchased-courses"
         ]
     }
