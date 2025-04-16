@@ -76,10 +76,17 @@ export default function Navbar() {
   return (
     <header className="border-b">
       <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-        <Link href="/" className="flex items-center space-x-2">
-          <Dumbbell className="h-6 w-6 text-primary" />
-          <span className="text-xl font-bold">FitForge</span>
-        </Link>
+        {user?.role === 'admin' ? (
+          <div className="flex items-center space-x-2">
+            <Dumbbell className="h-6 w-6 text-primary" />
+            <span className="text-xl font-bold">FitForge Admin</span>
+          </div>
+        ) : (
+          <Link href="/" className="flex items-center space-x-2">
+            <Dumbbell className="h-6 w-6 text-primary" />
+            <span className="text-xl font-bold">FitForge</span>
+          </Link>
+        )}
 
         <nav className="flex items-center space-x-4">
           <div>{user?.role}</div>
@@ -87,13 +94,15 @@ export default function Navbar() {
             <>
               {user ? (
                 <div className="flex items-center gap-4">
-                  <Button
-                    variant="outline"
-                    onClick={() => router.push('/my-courses')}
-                    className="hidden md:flex"
-                  >
-                    My Courses
-                  </Button>
+                  {user.role !== 'admin' && (
+                    <Button
+                      variant="outline"
+                      onClick={() => router.push('/my-courses')}
+                      className="hidden md:flex"
+                    >
+                      My Courses
+                    </Button>
+                  )}
                   {user.role === 'admin' && (
                     <Button
                       variant="outline"
@@ -125,7 +134,7 @@ export default function Navbar() {
                           localStorage.removeItem('token')
                           localStorage.removeItem('isAdmin')
                           setUser(null)
-                          router.push('/')
+                          router.push(user?.role === 'admin' ? '/login' : '/')
                         }}
                       >
                         Logout
