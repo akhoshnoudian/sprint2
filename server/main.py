@@ -6,6 +6,7 @@ import shutil
 from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException, status, Query, Request, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from bson import ObjectId
 
@@ -41,6 +42,15 @@ MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://shashank8can:vGmtipNL3W4jdlXJ@
 
 # Setup FastAPI
 app = FastAPI()
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # MongoDB Client
 client = MongoClient(MONGO_URI)
@@ -1188,6 +1198,62 @@ async def get_course_reviews(course_id: str, token: str = Depends(oauth2_scheme)
             content={"detail": "Internal server error"},
             headers=CORS_HEADERS
         )
+
+@app.get("/instructor/courses")
+async def get_instructor_courses(token: str = Depends(oauth2_scheme)):
+    try:
+        # Decode the JWT token
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        username = payload.get("sub")
+        role = payload.get("role")
+
+        # Verify that the user is an instructor
+        if role != "instructor":
+            raise HTTPException(status_code=403, detail="Only instructors can access this endpoint")
+
+        # Get the user from the database
+        user = users_collection.find_one({"username": username})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Get all courses created by this instructor
+        logger.info(f"Looking for courses for instructor: {username}")
+        
+        # First, let's see what's in the database
+        sample_courses = list(courses_collection.find().limit(2))
+        logger.info(f"Sample courses in DB: {json.dumps(sample_courses, default=str)}")
+        
+        # Now try to find instructor's courses
+        courses = list(courses_collection.find({"instructor": username}))
+        logger.info(f"Found {len(courses)} courses")
+        
+        # Get reviews for each course
+        for course in courses:
+            course["_id"] = str(course["_id"])
+            
+            # Get reviews for this course
+            reviews = list(reviews_collection.find({"course_id": str(course["_id"])}))
+            formatted_reviews = []
+            
+            for review in reviews:
+                formatted_reviews.append({
+                    "_id": str(review["_id"]),
+                    "course_id": str(review["course_id"]),
+                    "user_id": str(review["user_id"]),
+                    "username": review["username"],
+                    "rating": review["rating"],
+                    "comment": review["comment"],
+                    "created_at": review["created_at"].isoformat() if isinstance(review["created_at"], datetime) else review["created_at"]
+                })
+            
+            course["reviews"] = formatted_reviews
+        
+        return JSONResponse(
+            content=json.loads(json.dumps(courses, cls=CustomJSONEncoder)),
+            headers=CORS_HEADERS
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/test-endpoints")
 async def test_endpoints():
